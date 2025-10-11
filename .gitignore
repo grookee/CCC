@@ -1,0 +1,38 @@
+# CMake build artefacts
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+
+# Visual Studio files
+*.sln
+*.vcxproj*
+*.suo
+*.user
+*.VC.db
+
+# Build directories and binaries
+build/
+drone/build/
+*.o
+*.obj
+*.exe
+*.dll
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+
+drone/level3.in
+drone/level3.out

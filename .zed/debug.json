@@ -1,0 +1,26 @@
+[
+  {
+    "label": "Debug drone binary",
+    "build": {
+      "command": "cmake",
+      "args": ["--build", ".", "--config", "Debug", "-j8"],
+      "cwd": "$ZED_WORKTREE_ROOT/drone/build"
+    },
+    "program": "$ZED_WORKTREE_ROOT/drone/build/Debug/drone.exe",
+    "request": "launch",
+    "adapter": "CodeLLDB",
+    "cwd": "$ZED_WORKTREE_ROOT/drone"
+  },
+  {
+    "label": "Debug drone binary (Release)",
+    "build": {
+      "command": "cmake",
+      "args": ["--build", ".", "--config", "Release", "-j8"],
+      "cwd": "$ZED_WORKTREE_ROOT/drone/build"
+    },
+    "program": "$ZED_WORKTREE_ROOT/drone/build/Release/drone.exe",
+    "request": "launch",
+    "adapter": "CodeLLDB",
+    "cwd": "$ZED_WORKTREE_ROOT/drone"
+  }
+]
