@@ -41,135 +41,195 @@ int computeAscentAccel(double currentHeight, double velocity, double minHeight, 
     }
 }
 
-int computeDescentAccel(double currentHeight, double velocity, const Params& params) {
+int computeDescentAccel(double currentHeight, double velocity, int lastAccel, const Params& params) {
     if (velocity > 0) {
         return params.minAccel;
-    } else if (velocity == 0) {
-        return (currentHeight <= params.landingTreshold) ? params.landingAccel : params.minAccel;
-    } else {
-        double vSquared = velocity * velocity;
-        double idealAccel = params.gravity + (vSquared - params.descentFudge) / (2.0 * currentHeight);
-        
-        if (idealAccel > params.maxAccel) return params.maxAccel;
-        if (idealAccel < params.minAccel) return params.minAccel;
-
-        return static_cast<int>(round(idealAccel));
     }
+
+    if (currentHeight < 1.0) {
+        if (velocity >= -1.5) {
+            return params.landingAccel;
+        }
+        return params.maxAccel;
+    }
+
+    if (velocity == 0) {
+        if (currentHeight <= params.landingTreshold) {
+            return params.landingAccel;
+        }
+        return params.minAccel;
+    }
+
+    double vSquared = velocity * velocity;
+    double neededDecel = (vSquared - 1.0) / (2.0 * currentHeight);
+    double idealAccel = params.gravity + neededDecel;
+
+    if (idealAccel > params.maxAccel) idealAccel = params.maxAccel;
+    if (idealAccel < params.minAccel) idealAccel = params.minAccel;
+
+    int targetAccel = static_cast<int>(round(idealAccel));
+
+    if (currentHeight > 3.0 && currentHeight < 100.0 && abs(targetAccel - lastAccel) == 1) {
+        if (abs(velocity + 1.0) > 5.0) {
+            return targetAccel;
+        }
+        return lastAccel;
+    }
+
+    return targetAccel;
 }
 
-vector<int> computeAxSequence(int t, double d) {
-    int maxA = 20;
-    vector<int> ax(t, 0);
-    if (t <= 0) return ax;
-    if (t == 1) {
-        ax[0] = 0;
-        return ax;
+int computeXAccel(double currentX, double vx, double targetX, int ticksRemaining, int availableAccel) {
+    if (ticksRemaining <= 0) return 0;
+
+    double deltaX = targetX - currentX;
+
+    if (abs(deltaX) < 0.5 && vx == 0) {
+        return 0;
     }
-    if (t == 2) {
-        int a = round(d / 2.0);
-        a = max(-maxA, min(maxA, a));
-        ax[0] = a;
-        ax[1] = -a;
-        return ax;
-    }
-    if (t == 3) {
-        int target = round(d);
-        for (int a0 = -maxA; a0 <= maxA; a0++) {
-            for (int a1 = -maxA; a1 <= maxA; a1++) {
-                int a2 = -a0 - a1;
-                if (abs(a2) > maxA) continue;
-                if (2 * a0 + a1 == target) {
-                    ax[0] = a0;
-                    ax[1] = a1;
-                    ax[2] = a2;
-                    return ax;
-                }
+
+    if (vx != 0) {
+        int sign = (vx > 0) ? 1 : -1;
+        double absVx = abs(vx);
+
+        int maxBrake = min(availableAccel, MAX_ACCEL);
+        double brakingDistance;
+
+        if (maxBrake >= absVx) {
+            brakingDistance = absVx;
+        } else {
+            int ticks = (int)ceil(absVx / maxBrake);
+            brakingDistance = 0;
+            double v = absVx;
+            for (int i = 0; i < ticks && v > 0; i++) {
+                v -= maxBrake;
+                if (v < 0) v = 0;
+                brakingDistance += v;
             }
+            brakingDistance += absVx;
         }
-        // if not found, use 0
-        return ax;
+
+        double distanceToTarget = abs(deltaX);
+        bool shouldBrake = false;
+
+        if (vx > 0) {
+            shouldBrake = (currentX + brakingDistance >= targetX - 0.5);
+        } else {
+            shouldBrake = (currentX - brakingDistance <= targetX + 0.5);
+        }
+
+        if (shouldBrake) {
+            int brake = min(availableAccel, max(1, (int)ceil(absVx)));
+            return -sign * brake;
+        }
     }
-    if (t == 7) {
-        double dd = d / 6.0;
-        int a = round(dd / 2.0);
-        int b = round(dd - 2.0 * a);
-        int c = -3 * a - 3 * b;
-        a = max(-maxA, min(maxA, a));
-        b = max(-maxA, min(maxA, b));
-        c = max(-maxA, min(maxA, c));
-        ax = {a, a, a, b, b, b, c};
-        return ax;
+
+    int sign = (deltaX > 0) ? 1 : -1;
+
+    if ((deltaX > 0 && vx < 0) || (deltaX < 0 && vx > 0)) {
+        int brake = min(availableAccel, MAX_ACCEL);
+        return vx > 0 ? -brake : brake;
     }
-    // for other t, use bang-bang if even
-    if (t % 2 == 0) {
-        int m = t / 2;
-        double a_double = d / (m * m);
-        int a = round(a_double);
-        a = max(-maxA, min(maxA, a));
-        for (int i = 0; i < m; i++) ax[i] = a;
-        for (int i = m; i < t; i++) ax[i] = -a;
-        return ax;
+
+    double maxAccel = min((double)availableAccel, (double)MAX_ACCEL);
+
+    if (ticksRemaining > 4) {
+        double timeToMidpoint = ticksRemaining / 2.0;
+        double neededAccel = abs(deltaX) / (timeToMidpoint * timeToMidpoint);
+        maxAccel = min(maxAccel, neededAccel + 1.0);
     }
-    // for odd, perhaps similar to t=3 or t=7, but for simplicity, use 0
-    return ax;
+
+    return sign * min((int)round(maxAccel), availableAccel);
 }
 
 auto simulateFlight(double landing_pad_x, double min_height, int time_limit, const Params& params = defaultParams()) {
-    // first, simulate y
-    vector<int> ay_sequence;
+    vector<pair<int, int>> accelerations;
+
+    double absTargetX = abs(landing_pad_x);
+
+    double avgXAccelDuringDescent = 7.0;
+
+    double estimatedXTime = 2.0 * sqrt(absTargetX / avgXAccelDuringDescent);
+
+    estimatedXTime *= 1.3;
+
+    double avgDescentRate = 10.0;
+    double neededHeight = estimatedXTime * avgDescentRate;
+
+    double targetHeight = max((double)min_height, neededHeight);
+    double maxReasonableHeight = time_limit * 2.0;
+    targetHeight = min(targetHeight, maxReasonableHeight);
+    targetHeight = max(targetHeight, min_height * 1.1);
+
     double height = 0.0;
     double velocity = 0.0;
+    double x = 0.0;
+    double vx = 0.0;
     bool reachedMinHeight = false;
+    bool reachedTargetHeight = false;
+    int lastAccel = 10;
 
     for (int tick = 0; tick < time_limit; tick++) {
         if (height >= min_height) reachedMinHeight = true;
+        if (height >= targetHeight) reachedTargetHeight = true;
 
         if (height <= 0 && reachedMinHeight) break;
 
         int ay = 0;
-
-        if (!reachedMinHeight) {
-            ay = computeAscentAccel(height, velocity, min_height, params);
+        if (!reachedTargetHeight) {
+            ay = computeAscentAccel(height, velocity, targetHeight, params);
         } else {
-            ay = computeDescentAccel(height, velocity, params);
+            ay = computeDescentAccel(height, velocity, lastAccel, params);
+        }
+        lastAccel = ay;
+        ay = max(params.minAccel, min(params.maxAccel, ay));
+
+        int availableForX = MAX_ACCEL - ay;
+
+        int ticksRemaining = time_limit - tick;
+        if (reachedTargetHeight && velocity < 0) {
+            double estimatedTicks = max(1.0, height / max(1.0, abs(velocity)));
+            ticksRemaining = min(ticksRemaining, (int)ceil(estimatedTicks) + 5);
         }
 
-        ay = max(params.minAccel, min(params.maxAccel, ay));
-        ay_sequence.push_back(ay);
+        int ax = computeXAccel(x, vx, landing_pad_x, ticksRemaining, availableForX);
 
+        int totalAccel = abs(ax) + abs(ay);
+        if (totalAccel > MAX_ACCEL) {
+            int excess = totalAccel - MAX_ACCEL;
+            if (ax > 0) {
+                ax = max(0, ax - excess);
+            } else {
+                ax = min(0, ax + excess);
+            }
+        }
+
+        accelerations.push_back({ax, ay});
+
+        vx += ax;
+        x += vx;
         velocity += ay - GRAVITY;
         height += velocity;
 
         if (height < 0 && !reachedMinHeight) break;
     }
 
-    int t = ay_sequence.size();
-    auto ax_sequence = computeAxSequence(t, landing_pad_x);
-
-    vector<pair<int, int>> accelerations;
-    for (int i = 0; i < t; i++) {
-        int ax = ax_sequence[i];
-        int ay = ay_sequence[i];
-        int total = abs(ax) + abs(ay);
-        if (total > 20) {
-            int excess = total - 20;
-            if (abs(ax) >= excess) {
-                ax = ax > 0 ? ax - excess : ax + excess;
-            } else {
-                ay = ay - excess; // since ay >=0
-            }
-            ax = max(-20, min(20, ax));
-            ay = max(0, min(20, ay));
-        }
-        accelerations.push_back({ax, ay});
-    }
-
     return accelerations;
 }
 
-int main() {
-    ifstream fin("level3.in");
-    ofstream fout("level3.out");
+int main(int argc, char* argv[]) {
+    string inputFile = "level3.in";
+    string outputFile = "level3.out";
+
+    if (argc >= 2) {
+        inputFile = argv[1];
+    }
+    if (argc >= 3) {
+        outputFile = argv[2];
+    }
+
+    ifstream fin(inputFile);
+    ofstream fout(outputFile);
 
     int N;
     fin >> N;
