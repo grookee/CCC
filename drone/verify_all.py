@@ -1,4 +1,3 @@
-# Verify all flights
 GRAVITY = 10
 
 with open('level3.in') as f:

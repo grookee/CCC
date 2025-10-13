@@ -1,4 +1,3 @@
-#Read from file
 with open('level3.out') as f:
     line = f.readline().strip()
     accels = list(map(int, line.split()))
