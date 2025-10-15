@@ -369,11 +369,13 @@ int main(int argc, char* argv[]) {
         
         auto flight = simulateFlight(landing_pad_x, min_height, time_limit, buildings, landing_pad_y);
 
-        for (size_t j = 0; j < flight.size(); j++) {
-            if (j > 0) fout << " ";
-            fout << flight[j].first << "," << flight[j].second;
+        if (!flight.empty()) {
+            for (size_t j = 0; j < flight.size(); j++) {
+                if (j > 0) fout << " ";
+                fout << flight[j].first << "," << flight[j].second;
+            }
+            fout << "\n";
         }
-        fout << "\n";
     }
 
     fin.close();
