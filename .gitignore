@@ -34,9 +34,6 @@ __pycache__/
 Thumbs.db
 
 
-drone/level3.in
-drone/level3.out
-
 # Test input/output files
 drone/*.in
 drone/*.out
