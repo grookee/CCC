@@ -14,6 +14,7 @@ constexpr int MODERATE_ACCEL = 5;
 constexpr double LANDING_HEIGHT_THRESHOLD = 2.0;
 constexpr int LANDING_ACCEL = 9;
 constexpr double DESCENT_FUDGE_FACTOR = 1.0;
+constexpr double ELEVATED_LANDING_TOLERANCE = 1.0;
 
 struct Building {
     double left;
@@ -269,12 +270,13 @@ auto simulateFlight(double landing_pad_x, double min_height, int time_limit,
         // Check if landed: at target position and height (check after position update)
         bool atTargetX = abs(x - landing_pad_x) < 0.5;
         // For ground landing (landing_pad_y ~= 0), land when height <= 0
-        // For elevated landing, land when at or slightly above target height (within 1 unit)
+        // For elevated landing, land when at or slightly above target height
         bool atTargetHeight;
         if (landing_pad_y < 1.0) {
             atTargetHeight = height <= 0;
         } else {
-            atTargetHeight = height >= landing_pad_y && height <= landing_pad_y + 1.0;
+            atTargetHeight = height >= landing_pad_y && 
+                           height <= landing_pad_y + ELEVATED_LANDING_TOLERANCE;
         }
         if (atTargetX && atTargetHeight && reachedMinHeight) break;
         
