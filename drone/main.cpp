@@ -2,6 +2,7 @@
 #include <vector>
 #include <fstream>
 #include <cmath>
+#include <tuple>
 
 using namespace std;
 
@@ -13,6 +14,13 @@ constexpr int MODERATE_ACCEL = 5;
 constexpr double LANDING_HEIGHT_THRESHOLD = 2.0;
 constexpr int LANDING_ACCEL = 9;
 constexpr double DESCENT_FUDGE_FACTOR = 1.0;
+constexpr double ELEVATED_LANDING_TOLERANCE = 1.0;
+
+struct Building {
+    double left;
+    double right;
+    double height;
+};
 
 struct Params {
     double gravity;
@@ -142,7 +150,41 @@ int computeXAccel(double currentX, double vx, double targetX, int ticksRemaining
     return sign * min((int)round(maxAccel), availableAccel);
 }
 
-auto simulateFlight(double landing_pad_x, double min_height, int time_limit, const Params& params = defaultParams()) {
+bool isInsideBuilding(double x, double y, const Building& building) {
+    return x >= building.left && x <= building.right && 
+           y >= 0 && y <= building.height;
+}
+
+double getMaxHeightInPath(double startX, double endX, 
+                          const vector<Building>& buildings) {
+    double maxHeight = 0;
+    for (const auto& building : buildings) {
+        // Check if building is in the flight path
+        bool inPath = (startX <= building.right && endX >= building.left) ||
+                      (endX <= building.right && startX >= building.left);
+        if (inPath) {
+            maxHeight = max(maxHeight, building.height);
+        }
+    }
+    return maxHeight;
+}
+
+double getLandingPadHeight(double landing_pad_x, double landing_pad_y,
+                           const vector<Building>& buildings) {
+    for (const auto& building : buildings) {
+        if (landing_pad_x >= building.left && 
+            landing_pad_x <= building.right &&
+            abs(landing_pad_y - building.height) < 0.1) {
+            return building.height;
+        }
+    }
+    return 0.0; // Landing on ground
+}
+
+auto simulateFlight(double landing_pad_x, double min_height, int time_limit, 
+                   const vector<Building>& buildings = vector<Building>(),
+                   double landing_pad_y = 0.0,
+                   const Params& params = defaultParams()) {
     vector<pair<int, int>> accelerations;
 
     double absTargetX = abs(landing_pad_x);
@@ -160,6 +202,19 @@ auto simulateFlight(double landing_pad_x, double min_height, int time_limit, con
     double maxReasonableHeight = time_limit * 2.0;
     targetHeight = min(targetHeight, maxReasonableHeight);
     targetHeight = max(targetHeight, min_height * 1.1);
+    
+    // Adjust for buildings in the flight path
+    if (!buildings.empty()) {
+        double maxBuildingHeight = getMaxHeightInPath(0, landing_pad_x, buildings);
+        double clearanceMargin = 5.0; // Safety margin above buildings
+        double minRequiredHeight = max(min_height, maxBuildingHeight + clearanceMargin);
+        targetHeight = max(targetHeight, minRequiredHeight);
+    }
+    
+    // For elevated landing pads, ensure we go high enough above the pad for controlled descent
+    if (landing_pad_y > 0) {
+        targetHeight = max(targetHeight, landing_pad_y + 10.0);
+    }
 
     double height = 0.0;
     double velocity = 0.0;
@@ -169,26 +224,37 @@ auto simulateFlight(double landing_pad_x, double min_height, int time_limit, con
     bool reachedTargetHeight = false;
     int lastAccel = 10;
 
+    // Explicit takeoff tracking to avoid early termination before issuing a command
+    bool hasTakenOff = false;
+
     for (int tick = 0; tick < time_limit; tick++) {
         if (height >= min_height) reachedMinHeight = true;
         if (height >= targetHeight) reachedTargetHeight = true;
-
-        if (height <= 0 && reachedMinHeight) break;
 
         int ay = 0;
         if (!reachedTargetHeight) {
             ay = computeAscentAccel(height, velocity, targetHeight, params);
         } else {
-            ay = computeDescentAccel(height, velocity, lastAccel, params);
+            // Use relative height above landing pad for descent calculations
+            double relativeHeight = height - landing_pad_y;
+            ay = computeDescentAccel(relativeHeight, velocity, lastAccel, params);
         }
         lastAccel = ay;
         ay = max(params.minAccel, min(params.maxAccel, ay));
+
+        // Mark takeoff once we intend to apply upward thrust or are already airborne/moving
+        if (!hasTakenOff) {
+            if (height > 0.0 || velocity > 0.0 || ay > 0 || vx != 0.0) {
+                hasTakenOff = true;
+            }
+        }
 
         int availableForX = MAX_ACCEL - ay;
 
         int ticksRemaining = time_limit - tick;
         if (reachedTargetHeight && velocity < 0) {
-            double estimatedTicks = max(1.0, height / max(1.0, abs(velocity)));
+            double relativeHeight = height - landing_pad_y;
+            double estimatedTicks = max(1.0, relativeHeight / max(1.0, abs(velocity)));
             ticksRemaining = min(ticksRemaining, (int)ceil(estimatedTicks) + 5);
         }
 
@@ -210,6 +276,45 @@ auto simulateFlight(double landing_pad_x, double min_height, int time_limit, con
         x += vx;
         velocity += ay - GRAVITY;
         height += velocity;
+        
+        // Check if landed: at target position and height (check after position update)
+        bool atTargetX = abs(x - landing_pad_x) < 0.5;
+        // For ground landing (landing_pad_y ~= 0), land when height <= 0
+        // For elevated landing, land when at or slightly above target height
+        bool atTargetHeight;
+        if (landing_pad_y < 1.0) {
+            atTargetHeight = height <= 0;
+        } else {
+            atTargetHeight = height >= landing_pad_y && 
+                           height <= landing_pad_y + ELEVATED_LANDING_TOLERANCE;
+        }
+        if (atTargetX && atTargetHeight && reachedMinHeight && hasTakenOff) break;
+        
+        // Check for building collisions (except when landing on pad on a building)
+        bool landingOnBuilding = false;
+        if (landing_pad_y > 0) {
+            // Check if landing pad is on a building
+            for (const auto& building : buildings) {
+                if (landing_pad_x >= building.left && landing_pad_x <= building.right &&
+                    abs(landing_pad_y - building.height) < 0.1) {
+                    // Landing pad is on this building
+                    // Allow drone to be in this building's volume when near the pad
+                    if (abs(x - landing_pad_x) < 2.0 && abs(height - landing_pad_y) < 10.0) {
+                        landingOnBuilding = true;
+                    }
+                    break;
+                }
+            }
+        }
+        
+        if (!buildings.empty() && !landingOnBuilding) {
+            for (const auto& building : buildings) {
+                if (isInsideBuilding(x, height, building)) {
+                    // Collision detected - clearance planning should prevent this
+                    break;
+                }
+            }
+        }
 
         if (height < 0 && !reachedMinHeight) break;
     }
@@ -234,18 +339,46 @@ int main(int argc, char* argv[]) {
     int N;
     fin >> N;
 
+    // Read all flight data first
+    vector<tuple<double, double, int>> flights;
+    flights.reserve(N);
     for (int i = 0; i < N; i++) {
-        double landing_pad_x, min_height;
+        double landing_pad_x, landing_pad_y;
         int time_limit;
-        fin >> landing_pad_x >> min_height >> time_limit;
-
-        auto flight = simulateFlight(landing_pad_x, min_height, time_limit);
-
-        for (size_t j = 0; j < flight.size(); j++) {
-            if (j > 0) fout << " ";
-            fout << flight[j].first << "," << flight[j].second;
+        fin >> landing_pad_x >> landing_pad_y >> time_limit;
+        flights.push_back(make_tuple(landing_pad_x, landing_pad_y, time_limit));
+    }
+    
+    // Read buildings if available
+    vector<Building> buildings;
+    int B = 0;
+    if (fin >> B) {
+        buildings.reserve(B);
+        for (int j = 0; j < B; j++) {
+            double left, right, height;
+            fin >> left >> right >> height;
+            buildings.push_back({left, right, height});
         }
-        fout << "\n";
+    }
+    
+    // Process each flight
+    for (int i = 0; i < N; i++) {
+        double landing_pad_x = get<0>(flights[i]);
+        double landing_pad_y = get<1>(flights[i]);
+        int time_limit = get<2>(flights[i]);
+        
+        // With or without buildings, min_height is the given Y target/constraint
+        double min_height = landing_pad_y;
+        auto flight = simulateFlight(landing_pad_x, min_height, time_limit, buildings, landing_pad_y);
+
+        // Defensive: only emit a line if we actually computed a sequence
+        if (!flight.empty()) {
+            for (size_t j = 0; j < flight.size(); j++) {
+                if (j > 0) fout << " ";
+                fout << flight[j].first << "," << flight[j].second;
+            }
+            fout << "\n";
+        }
     }
 
     fin.close();
