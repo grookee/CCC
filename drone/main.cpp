@@ -224,8 +224,11 @@ auto simulateFlight(double landing_pad_x, double min_height, int time_limit,
     bool reachedTargetHeight = false;
     int lastAccel = 10;
 
+    // Explicit takeoff tracking to avoid early termination before issuing a command
+    bool hasTakenOff = false;
+
     for (int tick = 0; tick < time_limit; tick++) {
-        if (height >= min_height && tick > 0) reachedMinHeight = true;
+        if (height >= min_height) reachedMinHeight = true;
         if (height >= targetHeight) reachedTargetHeight = true;
 
         int ay = 0;
@@ -238,6 +241,13 @@ auto simulateFlight(double landing_pad_x, double min_height, int time_limit,
         }
         lastAccel = ay;
         ay = max(params.minAccel, min(params.maxAccel, ay));
+
+        // Mark takeoff once we intend to apply upward thrust or are already airborne/moving
+        if (!hasTakenOff) {
+            if (height > 0.0 || velocity > 0.0 || ay > 0 || vx != 0.0) {
+                hasTakenOff = true;
+            }
+        }
 
         int availableForX = MAX_ACCEL - ay;
 
@@ -278,7 +288,7 @@ auto simulateFlight(double landing_pad_x, double min_height, int time_limit,
             atTargetHeight = height >= landing_pad_y && 
                            height <= landing_pad_y + ELEVATED_LANDING_TOLERANCE;
         }
-        if (atTargetX && atTargetHeight && reachedMinHeight) break;
+        if (atTargetX && atTargetHeight && reachedMinHeight && hasTakenOff) break;
         
         // Check for building collisions (except when landing on pad on a building)
         bool landingOnBuilding = false;
@@ -300,8 +310,7 @@ auto simulateFlight(double landing_pad_x, double min_height, int time_limit,
         if (!buildings.empty() && !landingOnBuilding) {
             for (const auto& building : buildings) {
                 if (isInsideBuilding(x, height, building)) {
-                    // Collision detected - continue anyway but this indicates a problem
-                    // In practice, the clearance height should prevent this
+                    // Collision detected - clearance planning should prevent this
                     break;
                 }
             }
@@ -332,6 +341,7 @@ int main(int argc, char* argv[]) {
 
     // Read all flight data first
     vector<tuple<double, double, int>> flights;
+    flights.reserve(N);
     for (int i = 0; i < N; i++) {
         double landing_pad_x, landing_pad_y;
         int time_limit;
@@ -343,6 +353,7 @@ int main(int argc, char* argv[]) {
     vector<Building> buildings;
     int B = 0;
     if (fin >> B) {
+        buildings.reserve(B);
         for (int j = 0; j < B; j++) {
             double left, right, height;
             fin >> left >> right >> height;
@@ -356,24 +367,18 @@ int main(int argc, char* argv[]) {
         double landing_pad_y = get<1>(flights[i]);
         int time_limit = get<2>(flights[i]);
         
-        // Determine min_height based on whether buildings are present
-        double min_height;
-        if (!buildings.empty()) {
-            // With buildings, landing_pad_y is the actual landing height
-            // We need to reach at least this height (or higher to clear buildings)
-            min_height = landing_pad_y;
-        } else {
-            // Without buildings, landing_pad_y is the min_height constraint
-            min_height = landing_pad_y;
-        }
-        
+        // With or without buildings, min_height is the given Y target/constraint
+        double min_height = landing_pad_y;
         auto flight = simulateFlight(landing_pad_x, min_height, time_limit, buildings, landing_pad_y);
 
-        for (size_t j = 0; j < flight.size(); j++) {
-            if (j > 0) fout << " ";
-            fout << flight[j].first << "," << flight[j].second;
+        // Defensive: only emit a line if we actually computed a sequence
+        if (!flight.empty()) {
+            for (size_t j = 0; j < flight.size(); j++) {
+                if (j > 0) fout << " ";
+                fout << flight[j].first << "," << flight[j].second;
+            }
+            fout << "\n";
         }
-        fout << "\n";
     }
 
     fin.close();
