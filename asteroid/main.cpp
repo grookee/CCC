@@ -1,161 +1,321 @@
 #include <bits/stdc++.h>
+using namespace std;
 
-constexpr int WIDTH = 3;
-
-struct Asteroid {
-    int w{}, h{}, digLimit{};
-    std::vector<std::string> grid;
+struct Asteroid
+{
+    int w, h, digLimit;
+    vector<string> grid;
 };
 
-Asteroid read_asteroid(std::istream &in)
+Asteroid read_asteroid(istream &in)
 {
-    Asteroid asteroid;
-    in >> asteroid.w >> asteroid.h >> asteroid.digLimit;
-    int total_rows = asteroid.h + 2;
-    asteroid.grid.resize(total_rows);
-
-    for (int i = 0; i < total_rows; ++i)
+    Asteroid a;
+    in >> a.w >> a.h >> a.digLimit;
+    int total = a.h + 2;
+    a.grid.resize(total);
+    for (int i = 0; i < total; ++i)
     {
-        in >> asteroid.grid[i];
+        in >> a.grid[i];
     }
-
-    return asteroid;
+    return a;
 }
 
-std::pair<int, int> find_outpost(const Asteroid &a)
+void find_outpost(const Asteroid &a, int &s_r, int &s_c)
 {
-    for (int r = 0; r < (int)a.grid.size(); ++r)
-    {
-        auto pos = a.grid[r].find('S');
-        if (pos != std::string::npos)
-        {
-            return {r, (int)pos};
-        }
-    }
-    return {-1, -1};
+    s_r = 0;
+    s_c = -1;
+    const string &row = a.grid[0];
+    for (int c = 0; c < (int)row.size(); ++c)
+        if (row[c] == 'S')
+            s_c = c;
 }
 
-void dig_vertical_highway(Asteroid &a, int s_col)
+int count_dug(const Asteroid &a)
 {
-    std::vector<int> minableCols;
+    int count = 0;
+    for (const auto &row : a.grid)
+        count += std::count(row.begin(), row.end(), 'X');
+    return count;
+}
+
+void dig_vertical(Asteroid &a, int s_c)
+{
+    // For h%3==0: ensure vertical coverage by completing vertical columns
+    // Horizontal rows are secondary - only add if budget allows
+    
+    vector<int> col;
     for (int c = 0; c < (int)a.grid[1].size(); ++c)
-    {
         if (a.grid[1][c] == ':')
+            col.push_back(c);
+
+    if (col.empty()) return;
+    
+    int dug = count_dug(a);
+    
+    // Step 1: Connect from outpost down to row 2
+    for (int r = 1; r <= min(2, a.h) && dug < a.digLimit; ++r)
+    {
+        if (a.grid[r][s_c] == ':')
         {
-            minableCols.push_back(c);
+            a.grid[r][s_c] = 'X';
+            dug++;
         }
     }
-    if (minableCols.size() != 3)
+    
+    // Step 2: Calculate budget - reserve space for vertical columns
+    vector<int> vert_indices;
+    for (int i = 1; i < (int)col.size(); i += 3)
+        vert_indices.push_back(i);
+    
+    // Count cells needed for full vertical columns
+    int vert_needed = 0;
+    for (int idx : vert_indices)
+    {
+        int c = col[idx];
+        for (int r = 1; r <= a.h; ++r)
+            if (a.grid[r][c] == ':')
+                vert_needed++;
+    }
+    
+    // Step 3: Dig first horizontal row only if we can still afford vertical columns after
+    int horiz_row2_needed = 0;
+    for (int c : col)
+        if (a.grid[2][c] == ':')
+            horiz_row2_needed++;
+    
+    if (dug + horiz_row2_needed + vert_needed <= a.digLimit)
+    {
+        // We can afford both - dig horizontal row 2
+        for (int c : col)
+        {
+            if (dug >= a.digLimit) break;
+            if (a.grid[2][c] == ':')
+            {
+                a.grid[2][c] = 'X';
+                dug++;
+            }
+        }
+    }
+    
+    // Step 4: Dig all vertical columns completely
+    for (int idx : vert_indices)
+    {
+        int c = col[idx];
+        for (int r = 1; r <= a.h && dug < a.digLimit; ++r)
+        {
+            if (a.grid[r][c] == ':')
+            {
+                a.grid[r][c] = 'X';
+                dug++;
+            }
+        }
+    }
+    
+    // Step 5: Add horizontal rows if budget remains
+    for (int r = 2; r <= a.h && dug < a.digLimit; r += 3)
+    {
+        if (a.grid[r][col[0]] == 'X') continue; // Already dug
+        
+        int needed = 0;
+        for (int c : col)
+            if (a.grid[r][c] == ':')
+                needed++;
+        
+        if (dug + needed <= a.digLimit)
+        {
+            for (int c : col)
+            {
+                if (a.grid[r][c] == ':')
+                {
+                    a.grid[r][c] = 'X';
+                    dug++;
+                }
+            }
+        }
+    }
+}
+
+void dig_horizontal(Asteroid &a, int s_c)
+{
+    // For w%3==0: dig pattern ensuring all parts stay connected
+    // Strategy: dig at least one vertical connector, then horizontal rows, then more verticals
+    
+    vector<int> col;
+    for (int c = 0; c < (int)a.grid[1].size(); ++c)
+        if (a.grid[1][c] == ':')
+            col.push_back(c);
+
+    if (col.empty()) return;
+
+    int dug = count_dug(a);
+
+    // Connect from outpost down to row 2
+    for (int r = 1; r <= min(2, a.h) && dug < a.digLimit; ++r)
+    {
+        if (a.grid[r][s_c] == ':')
+        {
+            a.grid[r][s_c] = 'X';
+            dug++;
+        }
+    }
+
+    // CRITICAL: Dig at least the first vertical connector column to ensure connectivity
+    if (col.size() > 1)
+    {
+        int c = col[1]; // Column at index 1 (every 3rd starting pattern)
+        for (int r = 1; r <= a.h && dug < a.digLimit; ++r)
+        {
+            if (a.grid[r][c] == ':')
+            {
+                a.grid[r][c] = 'X';
+                dug++;
+            }
+        }
+    }
+
+    // Dig main horizontal rows (every 3rd row)
+    for (int r = 2; r <= a.h && dug < a.digLimit; r += 3)
+    {
+        int needed = 0;
+        for (int c : col)
+            if (a.grid[r][c] == ':')
+                needed++;
+        
+        if (dug + needed <= a.digLimit)
+        {
+            for (int c : col)
+            {
+                if (a.grid[r][c] == ':')
+                {
+                    a.grid[r][c] = 'X';
+                    dug++;
+                }
+            }
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    // Add additional vertical connectors (starting from index 4, then every 3)
+    for (int i = 4; i < (int)col.size() && dug < a.digLimit; i += 3)
+    {
+        int c = col[i];
+        for (int r = 1; r <= a.h && dug < a.digLimit; ++r)
+        {
+            if (a.grid[r][c] == ':')
+            {
+                a.grid[r][c] = 'X';
+                dug++;
+            }
+        }
+    }
+}
+
+void maybe_add_bonus_dig(Asteroid &a)
+{
+    int dug = count_dug(a);
+    if (dug >= a.digLimit)
         return;
 
-    int left = minableCols[0];
-    int mid = minableCols[1];
-    int right = minableCols[2];
-
-    if (s_col == mid)
+    // Priority: find cells that are NOT adjacent to any tunnel
+    // These are the most important to fill for coverage
+    vector<pair<int,int>> uncovered;
+    for (int r = 1; r <= a.h; ++r)
     {
-        for (int r = 1; r <= a.h; ++r)
+        for (int c = 0; c < (int)a.grid[r].size(); ++c)
         {
-            if (a.grid[r][mid] == ':')
-                a.grid[r][mid] = 'X';
+            if (a.grid[r][c] == ':')
+            {
+                // Check if adjacent to any X
+                bool has_adjacent = false;
+                for (auto [dr, dc] : vector<pair<int,int>>{{-1,0}, {1,0}, {0,-1}, {0,1}})
+                {
+                    int nr = r + dr, nc = c + dc;
+                    if (nr >= 0 && nr < (int)a.grid.size() && nc >= 0 && nc < (int)a.grid[nr].size())
+                    {
+                        if (a.grid[nr][nc] == 'X')
+                        {
+                            has_adjacent = true;
+                            break;
+                        }
+                    }
+                }
+                if (!has_adjacent)
+                {
+                    uncovered.push_back({r, c});
+                }
+            }
         }
     }
+    
+    // Fill uncovered cells first
+    for (auto [r, c] : uncovered)
+    {
+        if (dug >= a.digLimit) return;
+        a.grid[r][c] = 'X';
+        dug++;
+    }
+    
+    // Then fill any remaining : cells
+    for (int r = 1; r <= a.h; ++r)
+    {
+        for (int c = 0; c < (int)a.grid[r].size(); ++c)
+        {
+            if (dug >= a.digLimit) return;
+            if (a.grid[r][c] == ':')
+            {
+                a.grid[r][c] = 'X';
+                dug++;
+            }
+        }
+    }
+}
+
+void solve(Asteroid &a)
+{
+    int s_r, s_c;
+    find_outpost(a, s_r, s_c);
+
+    // Choose strategy based on which dimension is divisible by 3
+    if (a.w % 3 == 0)
+        dig_horizontal(a, s_c);  // Width divisible by 3 -> horizontal main tunnels
+    else if (a.h % 3 == 0)
+        dig_vertical(a, s_c);    // Height divisible by 3 -> vertical main tunnels
     else
     {
-        int side = s_col;
-
-        if (a.grid[1][side] == ':')
-            a.grid[1][side] = 'X';
-        if (a.grid[1][mid] == ':')
-            a.grid[1][mid] = 'X';
-
-        for (int r = 2; r <= a.h; ++r)
-        {
-            if (a.grid[r][mid] == ':')
-                a.grid[r][mid] = 'X';
-        }
+        // Fallback: use based on aspect ratio
+        if (a.w == 3)
+            dig_vertical(a, s_c);
+        else
+            dig_horizontal(a, s_c);
     }
+
+    maybe_add_bonus_dig(a);
 }
 
-void dig_horizontal_highway(Asteroid &a, int s_col)
-{
-    if (a.w == 3)
-    {
-        for (int r = 1; r <= a.h; ++r)
-        {
-            if (a.grid[r][s_col] == ':')
-                a.grid[r][s_col] = 'X';
-        }
-        return;
-    }
-
-    std::vector<int> minableCols;
-    for (int c = 0; c < (int)a.grid[1].size(); ++c)
-    {
-        if (a.grid[1][c] == ':')
-            minableCols.push_back(c);
-    }
-
-    if (a.grid[1][s_col] == ':')
-        a.grid[1][s_col] = 'X';
-
-    for (int c : minableCols)
-    {
-        if (a.grid[2][c] == ':')
-            a.grid[2][c] = 'X';
-    }
-
-}
-
-void solve_asteroid(Asteroid &a)
-{
-    auto [s_row, s_col] = find_outpost(a);
-    if (s_row != 0 || s_col < 0) return;
-
-    if (a.w == 3)
-    {
-        dig_vertical_highway(a, s_col);
-    }
-    else if (a.h == 3)
-    {
-        dig_horizontal_highway(a, s_col);
-    }
-    else { }
-}
-
-void write_asteroid(const Asteroid &a, std::ostream &out, bool add_trailing_blank_line = true)
+void write_asteroid(const Asteroid &a, ostream &out, bool extra = true)
 {
     for (const auto &row : a.grid)
-    {
         out << row << '\n';
-    }
-    if (add_trailing_blank_line)
-    {
+    if (extra)
         out << '\n';
-    }
 }
 
-int main() {
-    std::ifstream infile("input.in");
-    std::ofstream outfile("output.out");
-
-    std::ios::sync_with_stdio(false);
-    std::cin.tie(nullptr);
+int main()
+{
+    ifstream in("input.in");
+    ofstream out("output.out");
 
     int N;
-    if (!(infile >> N))
-    {
-        return 0;
-    }
-
+    in >> N;
     for (int i = 0; i < N; ++i)
     {
-        Asteroid a = read_asteroid(infile);
-        solve_asteroid(a);
-
-        bool add_blank = (i + 1 < N);
-        write_asteroid(a, outfile, add_blank);
+        Asteroid a = read_asteroid(in);
+        solve(a);
+        write_asteroid(a, out, i + 1 < N);
     }
-
     return 0;
 }
+// 
