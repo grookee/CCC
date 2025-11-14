@@ -29,6 +29,8 @@ constexpr Params defaultParams() {
     return {GRAVITY, MAX_ACCEL, MIN_ACCEL, PEAK_HEIGHT_MARGIN, MODERATE_ACCEL, LANDING_HEIGHT_THRESHOLD, LANDING_ACCEL, DESCENT_FUDGE_FACTOR};
 }
 
+
+
 int computeAscentAccel(double currentHeight, double velocity, double minHeight, const Params& params) {
     double estimatedPeak = currentHeight + (velocity * velocity) / (2.0 * params.gravity);
 
