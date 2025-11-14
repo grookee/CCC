@@ -220,8 +220,8 @@ auto simulateFlight(double landing_pad_x, double min_height, int time_limit, con
 }
 
 int main(int argc, char* argv[]) {
-    string inputFile = "level3.in";
-    string outputFile = "level3.out";
+    string inputFile = "input.in";
+    string outputFile = "output.out";
 
     if (argc >= 2) {
         inputFile = argv[1];
